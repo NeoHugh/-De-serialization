@@ -11,18 +11,6 @@
 #include <uchar.h>
 #include <fstream>
 namespace Tobin {
-	//#define BOOL 0x1
-	//#define SHORT 0x2
-	//#define INT 0x4
-	//#define LONG 0x8
-	//#define LONGL 0x10
-	//#define FLOAT 0x11
-	//#define DOUBLE 0x12
-	//#define DOUBLEL 0x14
-	//#define CHAR 0x18
-	//#define WCHART 0x20
-	//#define CHAR16 0x21
-	//#define CHAR32 0x22
 	#define ARITH 0x22;
 	#define STRING 0x24;
 	#define PTR 0x28;
@@ -32,16 +20,32 @@ namespace Tobin {
 	#define MAP 0x34;
 	#define PAIR 0x38;
 	#define ENDP 0x40;
+	struct YourUserDefinedTypeName
+	{
+		int x;
+		int y;
+		YourUserDefinedTypeName() :x(1), y(2) {}
+		bool operator==(YourUserDefinedTypeName& latter) {
+			return (x == latter.x) && (y == latter.y);
+		}
+	};
+	using userdefined = YourUserDefinedTypeName&;
 	template <class T>
 	class binser {
 	public:
-		void ser();
+		int ser();
+		void serUserDefined(userdefined);
 		//The overall interface of serialization.
-		void des();
+		int des(T&);
+		int des(std::unique_ptr<T>&);
+		void desUserDefined(userdefined);
+		//返回值要改一下，否则不知道指针的偏移量。
+		//类也要加一个偏移属性，打开文件后fseek一下。
+		//void desUserDefined(userdefined);
 		//The overall interface of deserialization.
 		//2 Ctor:
-		binser<T>(const std::string&, const T& ); //this one for serailization of ordinary objs.
-		binser<T>(const std::string&, const std::unique_ptr<T>&);//this one for serialization of unique_ptr.
+		binser<T>(const std::string&, const T& ,const int =0); //this one for serailization of ordinary objs.
+		binser<T>(const std::string&, const std::unique_ptr<T>&, const int =0);//this one for serialization of unique_ptr.
 		~binser<T>() { file.close(); }
 	private:
 		std::fstream file;
@@ -49,6 +53,7 @@ namespace Tobin {
 		T value;
 		std::unique_ptr<T> unq;
 		char* ptr;
+		int filePtr;
 		//Recursion + Template will see to serialization easily and elegantly.
 		//Thanks to my compiler!!
 		template<class Vec>void ser_parse(const std::vector<Vec>&);//Ser: vector
@@ -69,42 +74,54 @@ namespace Tobin {
 
 
 		//Codes below see to binary deserialization.
-		void des_arith(T);
-		void des_vector();
-		void des_string();
-		void des_map();
-		void des_set();
-		void des_list();
-		void des_pair();
-		void des_ptr();
-		void des_parse();
+		template<class Vec>void des_parse( std::vector<Vec>&);//des: vector
+		template<class li>void des_parse( std::list<li>&);//des:  list
+		template<class ele>void des_parse( std::set<ele>&);//des:  set
+		template<class key, class key_value>void des_parse( std::map< key, key_value>&);//des: map
+		template<class key, class key_value>void des_parse( std::pair< key, key_value>&);//des: pair
+		template<class UPTR>void des_parse( std::unique_ptr<UPTR>&);//des: unique_ptr
+		//Exit of recursion, the class type will either be C++ arithmetic or stirng. 
+		inline void des_parse( std::string&);//des: string
+		template<class Arith> inline void des_parse( Arith&);//des: arithmetic
 	};
 	//Cotrs:
-	template<class T> binser<T>::binser(const std::string& filename, const T& val) :fileName(filename), value(val) {
+	template<class T> binser<T>::binser(const std::string& filename, const T& val,const int filePos) :fileName(filename), value(val),filePtr(filePos) {
 			ptr = reinterpret_cast<char*> (&value);
 			unq = nullptr;
 		}
-	template<class T> binser<T>::binser(const std::string& filename, const std::unique_ptr<T>& unique) : fileName(filename) {
+	template<class T> binser<T>::binser(const std::string& filename, const std::unique_ptr<T>& unique, const int filePos) : fileName(filename), filePtr(filePos) {
 		unq = std::unique_ptr<T>(new T);
 		*unq = *unique;
 	}
 	//inner interface of serialization.
-	template<class T> void binser< T >::ser() {
+	template<class T> int binser< T >::ser() {
 
 		using namespace std;
-		file.open(fileName, ios::out | ios::binary);
+		file.open(fileName, ios::out | ios::binary|ios::app);
 		if (file.fail())
 		{
 			cout << "Failed to open!" << endl;
-			return;
+			return -1;
 		}
+		file.seekp(filePtr);
 		if (!unq)
 			ser_parse(value);
 		else
 			ser_parse(unq);
+		int temp = file.tellp();
 		file.close();
+		return temp;
 	}
 	//vector
+	template<class T> void binser< T >::serUserDefined(userdefined obj) {
+		using namespace std;
+		int filepos = 0;
+		binser <int>ant(fileName, obj.x,filepos);
+		filepos	= ant.ser();
+		binser <int>ant1(fileName, obj.y,filepos);
+		filepos	= ant1.ser();
+	}
+	//UserDefinedType serialization. Need you to change some source code by hand.
 	template<class T> template<class Vec>void binser <T>::ser_parse(const std::vector<Vec>& myvec) {
 		int type = VEC;
 		file.write(reinterpret_cast<char*>(&type), sizeof(type));
@@ -114,7 +131,6 @@ namespace Tobin {
 		{
 			ser_parse(iter);
 		}
-		
 	}
 	//list
 	template<class T> template<class li>void binser <T>::ser_parse(const std::list<li>& mylist) {
@@ -198,239 +214,151 @@ namespace Tobin {
 		file.write(reinterpret_cast<char*>(&type), sizeof(value));
 		//ptr += size;
 	}
+
 	//done for 2 serailization.
-	
-
-
 	//deserialization.
-	template<class T> inline void binser< T >::des_arith(T value){
-		int size = 0, type = 0;
-		file.read(reinterpret_cast<char*>(&type), sizeof(int));
-		size = sizeof(T);
-		//写入类型信息
-		file.read(ptr, size);
-		ptr += size;
+	//Codes below see to binary deserialization.
+	template<class T>template<class Vec>void binser <T>::des_parse(std::vector<Vec>&putin) {
+		int size;
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));//type
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));//confirm  size of the vector
+		for (size_t i = 0; i < size; i++)
+		{
+			Vec temp;
+			des_parse(temp);
+			putin.push_back(temp);
+		}
+	}
+	template<class T>template<class li>void binser <T>::des_parse(std::list<li>&putin) {
+		int size;
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));//type
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));//confirm  size of the vector
+		for (size_t i = 0; i < size; i++)
+		{
+			li temp;
+			des_parse(temp);
+			putin.push_back(temp);
+		}
+	}
+	template<class T>template<class ele>void binser <T>::des_parse(std::set<ele>&putin) {
+		int size;
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));//type
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));//confirm  size of the vector
+		for (size_t i = 0; i < size; i++)
+		{
+			ele temp;
+			des_parse(temp);
+			putin.insert(temp);
+		}
+	}
+	template<class T>template<class key, class key_value>void binser <T>::des_parse(std::map< key, key_value>&putin) {
+		int size;
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));//type
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));//confirm  size of the vector
+		for (size_t i = 0; i < size; i++)
+		{
+			std::pair<key, key_value> temp;
+			des_parse(temp);
+			putin.insert(temp);
+		}
+	}
+	template<class T>template<class key, class key_value>void binser <T>::des_parse(std::pair< key, key_value>&putin) {
+		int size;
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));//type   pai没有size
+		des_parse(putin.first);
+		des_parse(putin.second);
+	}
+	template<class T>template<class UPTR>void binser <T>::des_parse(std::unique_ptr<UPTR>&putin) {
+		int check;
+		file.read(reinterpret_cast<char*>(&check), sizeof(check));//指针开始标志
+		des_parse(*putin);
+		file.read(reinterpret_cast<char*>(&check), sizeof(check));//指针结束标志
+	}
+	template<class T>inline void binser <T>::des_parse(std::string&putin) {
+		int length;
+		file.read(reinterpret_cast<char*>(&length), sizeof(length));//读类型
+		file.read(reinterpret_cast<char*>(&length), sizeof(length));//读长度
+		std::unique_ptr<char> tempptr(new char[length]);
+		file.read(tempptr.get(), length);
+		putin = tempptr.get();
+	}
+	template<class T>template<class Arith> inline void binser <T>::des_parse(Arith& putin) {
+		int size;
+		file.read(reinterpret_cast<char*>(&size), sizeof(int));//读类型进来
+		file.read(reinterpret_cast<char*>(&size), sizeof(int));//读长度
+		file.read(reinterpret_cast<char*>(&putin), size);
+	}//des: arithmetic
+	template<class T> int binser< T >::des(T&putin) {
+
+		using namespace std;
+		file.open(fileName, ios::in | ios::binary);
+		if (file.fail())
+		{
+			cout << "Failed to open!" << endl;
+			return -1;
+		}
+		file.seekp(filePtr);
+		des_parse(putin);
+		int temp = file.tellp();
+		file.close();
+		return temp;
+	}
+	template<class T> int binser< T >::des(std:: unique_ptr<T>& putin) {
+		using namespace std;
+		file.open(fileName, ios::in | ios::binary);
+		if (file.fail())
+		{
+			cout << "Failed to open!" << endl;
+			return -1;
+		}
+		file.seekp(filePtr);
+		int type;
+		file.read(reinterpret_cast<char*>(&type), sizeof(type));
+		des_parse(*putin);
+		file.read(reinterpret_cast<char*>(&type), sizeof(type));
+		type = file.tellp();
+		file.close();
+		return type;
+	}
+	//userdefinedtype.
+	template<class T> void binser< T >::desUserDefined(userdefined obj) {
+		using namespace std;
+		int filepos = 0;
+		binser <int>ant(fileName, obj.x , filepos);
+		filepos =ant.des(obj.x);
+		binser <int>ant1(fileName, obj.y, filepos);
+		filepos = ant1.des(obj.y);
 	}
 
-	//以上为二进制序列化部分
-	//以下为二进制反序列化部分
-	//template<class T>template<class key,class key_value> void binser<T>::ser_map(std::pair<key, key_value>) {
-	//	std::is_arithmetic<key>check;
-	//	std::string type_name = typeid(key).name();
-	//	if (check.value) {
-	//		ser_arith(value);
-	//	}
-	//	else if (type_name.find("class std::basic_string") != std::string::npos && type_name.substr(11, 23) == "basic_string") {
-	//		ser_string(value);
-	//	}
-	//	else
-	//	{
-	//		if (type_name.find("class std::vector" != std::string::npos) && type_name.substr(11, 16) == "vector")
-	//		{
-	//			for (auto iter : value)
-	//				ser_vector(iter);
-	//		}
-	//		else if (type_name.find("class std::list") != std::string::npos && type_name.substr(11, 14) == "list")
-	//		{
-	//			for (auto iter : value)
-	//				ser_list(iter);
-	//		}
-	//		else if (type_name.find("class std::set") != std::string::npos && type_name.substr(11, 13) == "set") {
-	//			for (auto iter : value)
-	//				ser_set(set);
-	//		}
-	//		else if (type_name.find("struct std::pair") != std::string::npos && type_name.substr(11, 14) == "pair") {
-	//			for (auto iter : value)
-	//				ser_pair(iter);
-	//		}
-	//		else if (type_name.find("class std::map") != std::string::npos && type_name.substr(11, 13) == "map")
-	//		{
-	//			for (auto i = value.begin(); i != value.end(); i++)
-	//			{
-	//				ser_pair(i->first(), i->second());
-	//			}
-	//		}
-	//		else
-	//		{
-	//			//may be user defined structure
-	//		}
-	//	}
-	//}
+	
 
+	//4 overall wrapper!
+	template <class T> void serialize(T& value, std::string file) {
+		binser<T>mybin(file, value);
+		mybin.ser();
+
+	}
+	template <class T> void serialize(T& value, std::string file, bool user = 0) {
+		binser<T>mybin(file, value);
+		mybin.serUserDefined(value);
+
+	}
+	template <class T> void serialize(std::unique_ptr<T>& value, std::string file) {
+		binser<T>mybin(file, value);
+		mybin.ser();
+	}
+	template <class T> void deserialize(T& putin, std::string file) {
+		binser<T>mybin(file, putin);
+		mybin.des(putin);
+	}
+	template <class T> void deserialize(T& putin, std::string file, bool user = 0) {
+		binser<T>mybin(file, putin);
+		mybin.desUserDefined(putin);
+
+	}
+	template <class T> void deserialize(std::unique_ptr<T>& putin, std::string file) {
+		binser<T>mybin(file, putin);
+		mybin.des(putin);
+	}
 }
-#endif // !__BINSER__HEADER__
-
-//template<class T> template<class TVLS>void binser <T>::ser_parse(TVLS toparse) {
-//	std::is_arithmetic<TVLS>check;
-//	if (check.value) {//算数类型
-//		ser_arith(value);
-//	}
-//	else
-//	{
-//		/*for set, vector, listand string whose elements are of only a unique type, recursion will solve it.
-//			for map, pari, we developed corresbonding specific template type function to handle;*/
-//		std::string type_name = typeid(toparse).name();
-//		if (type_name.find("class std::vector") != std::string::npos && type_name.substr(11, 16) == "vector")
-//		{
-//			for (auto iter : toparse)
-//				ser_parse(iter);
-//		}
-//		else if (type_name.find("class std::list") != std::string::npos && type_name.substr(11, 14) == "list")
-//		{
-//			for (auto iter : toparse)
-//				ser_parse(iter);
-//		}
-//		else if (type_name.find("class std::set") != std::string::npos && type_name.substr(11, 13) == "set") {
-//			for (auto iter : toparse)
-//				ser_parse(iter);
-//		}
-//		else if (type_name.find("struct std::pair") != std::string::npos && type_name.substr(11, 14) == "pair") {
-//			ser_parse(toparse);
-//		}
-//		else if (type_name.find("class std::basic_string") != std::string::npos && type_name.substr(11, 23) == "basic_string") {
-//			ser_string(toparse);
-//		}
-//		else if (type_name.find("class std::map") != std::string::npos && type_name.substr(11, 13) == "map")
-//		{
-//			for (auto i = toparse.begin(); i != toparse.end(); i++)
-//			{
-//				ser_parse(i->first(), i->second());
-//			}
-//		}
-//		else if (type_name.find("class std::unique_ptr") != std::string::npos && type_name.substr(11,20 ) == "unique_ptr")
-//		{
-//			ser_parse(toparse);
-//		}
-//		else
-//		{
-//			//自定义类型
-//		}
-//	}
-//}
-
-
-//template<class T> void binser<T>::ser_vector(T value) {
-//	std::is_arithmetic<T>check;
-//	std::string type_name = typeid(T).name();
-//	if (check.value) {
-//		ser_arith(value);
-//	}
-//	else if (type_name.find("class std::basic_string") != std::string::npos && type_name.substr(11, 23) == "basic_string") {
-//		ser_string(value);
-//	}
-//	else
-//	{
-//		if (type_name.find("class std::vector" != std::string::npos) && type_name.substr(11, 16) == "vector")
-//		{
-//			for(auto iter:value)
-//			ser_vector(iter);
-//		}
-//		else if (type_name.find("class std::list") != std::string::npos && type_name.substr(11, 14) == "list")
-//		{
-//			for (auto iter : value)
-//			ser_list(iter);
-//		}
-//		else if (type_name.find("class std::set") != std::string::npos && type_name.substr(11, 13) == "set") {
-//			for (auto iter : value)
-//			ser_set(set);
-//		}
-//		else if (type_name.find("struct std::pair") != std::string::npos && type_name.substr(11, 14) == "pair") {
-//			for (auto iter : value)
-//			ser_pair(iter);
-//		}
-//		else if(type_name.find("class std::map") != std::string::npos && type_name.substr(11, 13) == "map")
-//		{
-//			for (auto i = value.begin(); i != value.end(); i++)
-//			{
-//				ser_pair(i->first(), i->second());
-//			}
-//		}
-//		else
-//		{
-//			//may be user defined structure
-//		}
-//	}
-
-//}
-//template<class T> void binser<T>::ser_list(T vlaue){
-//	std::is_arithmetic<T>check;
-//	std::string type_name = typeid(T).name();
-//	if (check.value) {
-//		ser_arith(value);
-//	}
-//	else if (type_name.find("class std::basic_string") != std::string::npos && type_name.substr(11, 23) == "basic_string") {
-//		ser_string(value);
-//	}
-//	else
-//	{
-//		if (type_name.find("class std::vector" != std::string::npos) && type_name.substr(11, 16) == "vector")
-//		{
-//			for (auto iter : value)
-//				ser_vector(iter);
-//		}
-//		else if (type_name.find("class std::list") != std::string::npos && type_name.substr(11, 14) == "list")
-//		{
-//			for (auto iter : value)
-//				ser_list(iter);
-//		}
-//		else if (type_name.find("class std::set") != std::string::npos && type_name.substr(11, 13) == "set") {
-//			for (auto iter : value)
-//				ser_set(set);
-//		}
-//		else if (type_name.find("struct std::pair") != std::string::npos && type_name.substr(11, 14) == "pair") {
-//			ser_parse()
-//		}
-//		else if (type_name.find("class std::map") != std::string::npos && type_name.substr(11, 13) == "map")
-//		{
-//			for (auto i = value.begin(); i != value.end(); i++)
-//			{
-//				ser_pair(i->first(), i->second());
-//			}
-//		}
-//		else
-//		{
-//			//may be user defined structure
-//		}
-//	}
-//}
-//template<class T> void binser<T>::ser_set(T vlaue) {
-//	std::is_arithmetic<T>check;
-//	std::string type_name = typeid(T).name();
-//	if (check.value) {
-//		ser_arith(value);
-//	}
-//	else if (type_name.find("class std::basic_string") != std::string::npos && type_name.substr(11, 23) == "basic_string") {
-//		ser_string(value);
-//	}
-//	else
-//	{
-//		if (type_name.find("class std::vector" != std::string::npos) && type_name.substr(11, 16) == "vector")
-//		{
-//			for (auto iter : value)
-//				ser_vector(iter);
-//		}
-//		else if (type_name.find("class std::list") != std::string::npos && type_name.substr(11, 14) == "list")
-//		{
-//			for (auto iter : value)
-//				ser_list(iter);
-//		}
-//		else if (type_name.find("class std::set") != std::string::npos && type_name.substr(11, 13) == "set") {
-//			for (auto iter : value)
-//				ser_set(set);
-//		}
-//		else if (type_name.find("struct std::pair") != std::string::npos && type_name.substr(11, 14) == "pair") {
-//			ser_parse()
-//		}
-//		else if (type_name.find("class std::map") != std::string::npos && type_name.substr(11, 13) == "map")
-//		{
-//			for (auto i = value.begin(); i != value.end(); i++)
-//			{
-//				ser_pair(i->first(), i->second());
-//			}
-//		}
-//		else
-//		{
-//			//may be user defined structure
-//		}
-//	}
-//}
+#endif
