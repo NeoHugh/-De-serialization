@@ -20,27 +20,14 @@ namespace Tobin {
 	#define MAP 0x34;
 	#define PAIR 0x38;
 	#define ENDP 0x40;
-	struct YourUserDefinedTypeName
-	{
-		int x;
-		int y;
-		YourUserDefinedTypeName() :x(1), y(2) {}
-		bool operator==(YourUserDefinedTypeName& latter) {
-			return (x == latter.x) && (y == latter.y);
-		}
-	};
-	using userdefined = YourUserDefinedTypeName&;
+	//以上为定义的标识，其实在序列化过程中没有用到
 	template <class T>
 	class binser {
 	public:
 		int ser();
-		void serUserDefined(userdefined);
 		//The overall interface of serialization.
 		int des(T&);
 		int des(std::unique_ptr<T>&);
-		void desUserDefined(userdefined);
-		//返回值要改一下，否则不知道指针的偏移量。
-		//类也要加一个偏移属性，打开文件后fseek一下。
 		//void desUserDefined(userdefined);
 		//The overall interface of deserialization.
 		//2 Ctor:
@@ -55,7 +42,7 @@ namespace Tobin {
 		char* ptr;
 		int filePtr;
 		//Recursion + Template will see to serialization easily and elegantly.
-		//Thanks to my compiler!!
+		//Thanks to my compiler!!!
 		template<class Vec>void ser_parse(const std::vector<Vec>&);//Ser: vector
 		template<class li>void ser_parse(const std::list<li>&);//Ser:  list
 		template<class ele>void ser_parse(const std::set<ele>&);//Ser:  set
@@ -63,15 +50,9 @@ namespace Tobin {
 		template<class key, class key_value>void ser_parse(const std::pair< key, key_value>&);//Ser: pair
 		template<class UPTR>void ser_parse(const std::unique_ptr<UPTR>&);//Ser: unique_ptr
 		//Exit of recursion, the class type will either be C++ arithmetic or stirng. 
-		inline void ser_parse(const std::string&);//Ser: string
+		inline void ser_parse(const std::string&);
 		template<class Arith> inline void ser_parse(const Arith&);//Ser: arithmetic
 		
-		//
-		//Functions for user_defined structure: to be appended.
-		//
-
-		//The above is for binary serialization.
-
 
 		//Codes below see to binary deserialization.
 		template<class Vec>void des_parse( std::vector<Vec>&);//des: vector
@@ -112,16 +93,6 @@ namespace Tobin {
 		file.close();
 		return temp;
 	}
-	//vector
-	template<class T> void binser< T >::serUserDefined(userdefined obj) {
-		using namespace std;
-		int filepos = 0;
-		binser <int>ant(fileName, obj.x,filepos);
-		filepos	= ant.ser();
-		binser <int>ant1(fileName, obj.y,filepos);
-		filepos	= ant1.ser();
-	}
-	//UserDefinedType serialization. Need you to change some source code by hand.
 	template<class T> template<class Vec>void binser <T>::ser_parse(const std::vector<Vec>& myvec) {
 		int type = VEC;
 		file.write(reinterpret_cast<char*>(&type), sizeof(type));
@@ -181,6 +152,7 @@ namespace Tobin {
 	}
 	//string
 	template<class T> void binser<T>::ser_parse(const std::string& value) {
+		file.seekp(std::ios::end);
 		const char* str_ptr = value.c_str();
 		int length = STRING;
 		file.write(reinterpret_cast<char*>(&length), sizeof(length));
@@ -191,33 +163,15 @@ namespace Tobin {
 	}
 	//arithmetic type
 	template<class T> template<class Arith>inline void binser< T>::ser_parse(const Arith& value) {
+		file.seekp(std::ios::end);
 		int type = ARITH;
 		file.write(reinterpret_cast<char*>(&type), sizeof(type));
 		type = sizeof(value);
 		file.write(reinterpret_cast<char*>(&type), sizeof(type));
-		//写入类型信息  好像真没有必要
-		//int type = 0;
-		//switch (typeid(TA).name())
-		//{
-		//case"bool":
-		//case"short":
-		//case "unsigned short":
-		//case "int":
-		//case "unsigned int":
-		//	case ""
-
-		//default:
-		//	break;
-		//}
-		//file.write(reinterpret_cast<char*>(&type), sizeof(int));
-		type = value;
-		file.write(reinterpret_cast<char*>(&type), sizeof(value));
-		//ptr += size;
+		file.write((char *)(&value), sizeof(value));
 	}
 
-	//done for 2 serailization.
-	//deserialization.
-	//Codes below see to binary deserialization.
+
 	template<class T>template<class Vec>void binser <T>::des_parse(std::vector<Vec>&putin) {
 		int size;
 		file.read(reinterpret_cast<char*>(&size), sizeof(size));//type
@@ -320,45 +274,41 @@ namespace Tobin {
 		file.close();
 		return type;
 	}
-	//userdefinedtype.
-	template<class T> void binser< T >::desUserDefined(userdefined obj) {
-		using namespace std;
-		int filepos = 0;
-		binser <int>ant(fileName, obj.x , filepos);
-		filepos =ant.des(obj.x);
-		binser <int>ant1(fileName, obj.y, filepos);
-		filepos = ant1.des(obj.y);
-	}
 
-	
 
-	//4 overall wrapper!
 	template <class T> void serialize(T& value, std::string file) {
 		binser<T>mybin(file, value);
 		mybin.ser();
-
 	}
-	template <class T> void serialize(T& value, std::string file, bool user = 0) {
-		binser<T>mybin(file, value);
-		mybin.serUserDefined(value);
+	//strategy for user defined type:
+	//use template with various classes and values
 
-	}
 	template <class T> void serialize(std::unique_ptr<T>& value, std::string file) {
 		binser<T>mybin(file, value);
 		mybin.ser();
 	}
-	template <class T> void deserialize(T& putin, std::string file) {
-		binser<T>mybin(file, putin);
-		mybin.des(putin);
+	void Userialize(std::string file) {
+		return;
 	}
-	template <class T> void deserialize(T& putin, std::string file, bool user = 0) {
-		binser<T>mybin(file, putin);
-		mybin.desUserDefined(putin);
+	template<class T1, class ... T2>void Userialize(std::string file, T1& start, T2& ... val) {
+		serialize(start,file);
+		Userialize(file, val...);
+	}
+	template <class T> int deserialize(std::unique_ptr<T>& putin, std::string file,int filepos=0) {
+		binser<T>mybin(file, putin,filepos);
+		return mybin.des(putin);
+	}
+	template <class T> int deserialize(T& putin, std::string file, int filepos = 0) {
+		binser<T>mybin(file, putin,filepos);
+		return mybin.des(putin);
+	}
+	void Udeserialize(std::string file,int filepos) {
+		return;
+	}
+	template <class T1, class ... T2> void Udeserialize(std::string file, int filepos,T1& start, T2& ... val ) {
+		int nextfilepos = deserialize(start, file,filepos);
+		Udeserialize(file, nextfilepos,  val...);
+	}
 
-	}
-	template <class T> void deserialize(std::unique_ptr<T>& putin, std::string file) {
-		binser<T>mybin(file, putin);
-		mybin.des(putin);
-	}
 }
 #endif

@@ -1,4 +1,4 @@
-#pragma once
+Ôªø#pragma once
 #ifndef __XML__HEADER__
 #define __XML__HEADER__
 
@@ -14,42 +14,36 @@
 #include <sstream>
 #include "tinyxml2.h"
 namespace Toxml {
-	union shift {
-		long long L;
-		long double Ld;
-	};
-	struct YourUserDefinedTypeName
-	{
-		int x;
-		int y;
-		YourUserDefinedTypeName() :x(1), y(2) {}
-		bool operator==(YourUserDefinedTypeName& latter) {
-			return (x == latter.x) && (y == latter.y);
-		}
-	};
-	using userdefined = YourUserDefinedTypeName&;
 	template <class T>
 	class xmlser {
 	public:
 		void ser(bool =0);
-		void serUserDefined(userdefined);
-		tinyxml2::XMLElement* des(T&, tinyxml2::XMLElement*);//÷–º‰Ω”◊≈µ˜”√µƒ
-		tinyxml2::XMLElement* des(T& );//ø™ ºµƒ
-		tinyxml2::XMLElement* des(std::unique_ptr<T>&, tinyxml2::XMLElement*);
+		tinyxml2::XMLElement* des(T& );//ÂºÄÂßãÁöÑ
 		tinyxml2::XMLElement* des(std::unique_ptr<T>&);
-		void desUserDefined(userdefined);
 		
 		//2 Ctor:
-		xmlser<T>(const std::string&, const T&, std::stringstream&, tinyxml2::XMLDocument* =nullptr); //this one for serailization of ordinary objs.
-		xmlser<T>(const std::string&, const std::unique_ptr<T>&, std::stringstream&, tinyxml2::XMLDocument* = nullptr);//this one for serialization of unique_ptr.
+		xmlser<T>(const std::string&, const T&, std::stringstream&, tinyxml2::XMLDocument* =nullptr,tinyxml2::XMLElement* =nullptr); //this one for serailization of ordinary objs.
+		xmlser<T>(const std::string&, const std::unique_ptr<T>&, std::stringstream&, tinyxml2::XMLDocument* = nullptr, tinyxml2::XMLElement* = nullptr);//this one for serialization of unique_ptr.
 	private:
 		std::string fileName;
 		T value;
 		std::unique_ptr<T> unq;
 		tinyxml2::XMLDocument* xml;
 		tinyxml2::XMLElement* rootNode;
+		tinyxml2::XMLElement* lastVisit;
 		std::stringstream& mystream;
+		//Userdefined type
+
 		//Recursion + Template will see to serialization easily and elegantly.
+		/*
+		Overall method:with the following STL specified and unique_ptr specified template functions,
+		we can simply use recursion to serialize the elements of a certain STL container.
+		don't need to consider whatever the type the element is because that's what compilers do.
+		Thanks to all coworkers of my compilers!!!Sincerely!!!
+		!(*‚ïπ‚ñΩ‚ïπ*)!!    !(*‚ïπ‚ñΩ‚ïπ*)!!		!(*‚ïπ‚ñΩ‚ïπ*)!!
+		As for unique_ptr, we construct a unique_ptr of the same type inside the object and reconstruct elements into that unique_ptr,
+		before returning, we simply do *outter_unique_ptr = *insider_uniqe_ptr. and that's done.(deep copy required.
+		*/
 		template<class Vec>void ser_parse(const std::vector<Vec>&, tinyxml2::XMLElement*);//Ser: vector
 		template<class li>void ser_parse(const std::list<li>&, tinyxml2::XMLElement*);//Ser:  list
 		template<class ele>void ser_parse(const std::set<ele>&, tinyxml2::XMLElement*);//Ser:  set
@@ -90,6 +84,7 @@ namespace Toxml {
 		template<class key, class key_value>void des_parse(std::map< key, key_value>&, tinyxml2::XMLElement*);//des: map
 		template<class key, class key_value>void des_parse(std::pair< key, key_value>&, tinyxml2::XMLElement*);//des: pair
 		template<class UPTR>void des_parse(std::unique_ptr<UPTR>&, tinyxml2::XMLElement*);//des: unique_ptr
+
 		//Exit of recursion, the class type will either be C++ arithmetic or stirng. 
 		inline void des_parse(std::string&, tinyxml2::XMLElement*);//des: string
 		inline void des_parse( bool&, tinyxml2::XMLElement* );
@@ -111,10 +106,10 @@ namespace Toxml {
 		inline void des_parse( unsigned long long&, tinyxml2::XMLElement* );
 	};
 	//Cotrs:
-	template<class T> xmlser<T>::xmlser(const std::string& filename, const T& val, std::stringstream& Tool, tinyxml2::XMLDocument* Overall) :fileName(filename), value(val), mystream(Tool), xml(Overall) {
+	template<class T> xmlser<T>::xmlser(const std::string& filename, const T& val, std::stringstream& Tool, tinyxml2::XMLDocument* Overall, tinyxml2::XMLElement* last) :fileName(filename), value(val), mystream(Tool), xml(Overall),lastVisit(last) {
 		unq = nullptr;
 	}
-	template<class T> xmlser<T>::xmlser(const std::string& filename, const std::unique_ptr<T>& unique, std::stringstream&Tool, tinyxml2::XMLDocument* Overall) : fileName(filename), mystream(Tool),xml(Overall) {
+	template<class T> xmlser<T>::xmlser(const std::string& filename, const std::unique_ptr<T>& unique, std::stringstream&Tool, tinyxml2::XMLDocument* Overall, tinyxml2::XMLElement* last) : fileName(filename), mystream(Tool),xml(Overall),lastVisit(last) {
 		unq = std::unique_ptr<T>(new T);
 		*unq = *unique;
 	}
@@ -124,47 +119,31 @@ namespace Toxml {
 	//outter interface of serialization.
 	template<class T> void xmlser< T >::ser(bool firstTime) {
 		using namespace tinyxml2;
-		if (firstTime) {
+		xml->LoadFile(fileName.c_str());
+		if (firstTime && !(rootNode = xml->RootElement())) {
+
 			XMLDeclaration* declaration = xml->NewDeclaration();
 			xml->InsertFirstChild(declaration);
 			rootNode = xml->NewElement("Serailization");
 			xml->InsertEndChild(rootNode);
 		}
-		else
+		else 
 			rootNode = xml->RootElement();
-		std::string nextVisit;
-		if (!unq)
-		{
-			nextVisit = rootNode->Name();
+			std::string nextVisit;
+			if (!unq)
+			{
+				nextVisit = rootNode->Name();
 				ser_parse(value, rootNode);
-		}
-		else {
-			tinyxml2::XMLElement* uniq_ptr = xml->NewElement("Unique_ptr");
-			rootNode->InsertEndChild(uniq_ptr);
-			nextVisit = uniq_ptr->Name();
-			ser_parse(*unq, uniq_ptr);
-		}
-		xml->SaveFile(fileName.c_str());
+			}
+			else {
+				tinyxml2::XMLElement* uniq_ptr = xml->NewElement("Unique_ptr");
+				rootNode->InsertEndChild(uniq_ptr);
+				nextVisit = uniq_ptr->Name();
+				ser_parse(*unq, uniq_ptr);
+			}
+			xml->SaveFile(fileName.c_str());
+		
 	}
-
-
-	template<class T> void xmlser< T >::serUserDefined(userdefined obj) {
-		using namespace std;
-		std::string lastVisit;
-		//int filepos = 0;
-		//binser <int>ant(fileName, obj.x, filepos);
-		//filepos = ant.ser();
-		//binser <int>ant1(fileName, obj.y, filepos);
-		//filepos = ant1.ser();
-		xmlser<int> ant(fileName,obj.x,mystream,xml);
-		ant.ser(1);
-		xmlser<int>ant1(fileName,obj.y, mystream, xml);
-		ant1.ser();
-	}
-	//UserDefinedType serialization. Need you to change some source code by hand.
-	
-	
-	
 	
 	//vector
 	template<class T> template<class Vec>void xmlser <T>::ser_parse(const std::vector<Vec>& myvec, tinyxml2::XMLElement* father) {
@@ -193,13 +172,6 @@ namespace Toxml {
 	}
 	//map
 	template<class T> template<class key, class key_value> void xmlser<T>::ser_parse(const std::map<key, key_value>& mymap, tinyxml2::XMLElement* father) {
-		//int type = MAP;
-		//file.write(reinterpret_cast<char*>(&type), sizeof(type));
-		//type = mymap.size();
-		//file.write(reinterpret_cast<char*>(&type), sizeof(type));
-		//for (auto iter : mymap)
-		//	ser_parse(iter);
-
 		tinyxml2::XMLElement* Map = xml->NewElement("Map");
 		Map->SetAttribute("Size", mymap.size());
 		for (auto iter : mymap)
@@ -207,7 +179,7 @@ namespace Toxml {
 		father->InsertEndChild(Map);
 
 	}
-	//pair
+	//pair is also one of the exits for a certain perspective.
 	template<class T> template<class key, class key_value> void xmlser<T>::ser_parse(const std::pair<key, key_value>& mypair, tinyxml2::XMLElement* father) {
 		tinyxml2::XMLElement* Pair = xml->NewElement("Pair");
 		tinyxml2::XMLElement* First = xml->NewElement("First");
@@ -247,8 +219,8 @@ namespace Toxml {
 		tinyxml2::XMLElement* Ushort = xml->NewElement("Ushort");
 		int temp = static_cast<int>(value);
 		temp &= 0x0000ffff;
-		std::string temp = std::to_string(temp);
-		Ushort->SetAttribute("val", temp.c_str());
+		std::string tempstr = std::to_string(temp);
+		Ushort->SetAttribute("val", tempstr.c_str());
 		father->InsertEndChild(Ushort);
 	}
 	template<class T> inline void xmlser< T>::ser_parse(const int& value, tinyxml2::XMLElement* father) {
@@ -339,54 +311,26 @@ namespace Toxml {
 		father->InsertEndChild(Char32_t);
 	}
 	
-	//done for 2 serailization.
-	//deserialization.
-	//Codes below see to binary deserialization.
-
-
-	//outter interface of serialization.
-	template<class T> tinyxml2::XMLElement* xmlser< T >::des(T& putin, tinyxml2::XMLElement* lastVisit) {
-
-		using namespace tinyxml2;
-		//xml = Overall;//–Ë“™Õ‚≤øload∫√
-		XMLElement* rootNode = lastVisit->NextSiblingElement();
-		des_parse(putin, rootNode);
-		return rootNode;
-		//∑«”√ªß◊‘∂®“Â¿‡–Õœ¬£¨rootNodeøœ∂®æÕ÷ª”–“ª∏ˆchildren
-	}
 	template<class T> tinyxml2::XMLElement* xmlser< T >::des(T& putin) {
 		using namespace tinyxml2;
-		//xml = Overall;//–Ë“™Õ‚≤øload∫√
-		XMLElement* rootNode = xml->RootElement()->FirstChildElement();
-		des_parse(putin, rootNode);
-		return rootNode;
-		//∑«”√ªß◊‘∂®“Â¿‡–Õœ¬£¨rootNodeøœ∂®æÕ÷ª”–“ª∏ˆchildren
-	}
-	template<class T> tinyxml2::XMLElement* xmlser< T >::des(std::unique_ptr<T>& putin, tinyxml2::XMLElement* lastVisit) {
-		using namespace tinyxml2;
-		//xml = Overall;
-		XMLElement* rootNode = lastVisit->NextSiblingElement()->FirstChildElement();
-		des_parse(*putin, rootNode);
-		return rootNode;
-		//∑«”√ªß◊‘∂®“Â¿‡–Õœ¬£¨rootNodeøœ∂®æÕ÷ª”–“ª∏ˆchildren
+		XMLElement* nextNode;
+		if (!lastVisit)
+		nextNode = xml->RootElement()->FirstChildElement();
+		else 
+		nextNode = lastVisit->NextSiblingElement();
+		des_parse(putin, nextNode);
+		return nextNode;
 	}
 	template<class T> tinyxml2::XMLElement* xmlser< T >::des(std::unique_ptr<T>& putin) {
 		using namespace tinyxml2;
-		//xml = Overall;
-		XMLElement* rootNode = xml->RootElement()->FirstChildElement()->FirstChildElement();
-		des_parse(*putin, rootNode);
-		return rootNode;
-		//∑«”√ªß◊‘∂®“Â¿‡–Õœ¬£¨rootNodeøœ∂®æÕ÷ª”–“ª∏ˆchildren
+		XMLElement* nextNode;
+		if(!lastVisit)
+		nextNode = xml->RootElement()->FirstChildElement()->FirstChildElement();
+		else 
+		nextNode = lastVisit->NextSiblingElement()->FirstChildElement();
+		des_parse(*putin, nextNode);
+		return nextNode;
 	}
-	template<class T> void xmlser< T >::desUserDefined(userdefined obj) {
-		using namespace std;
-		tinyxml2::XMLElement* nextVisit;
-		xmlser<int>ant(fileName, obj.x, mystream, xml);
-		nextVisit = ant.des(obj.x);
-		xmlser<int>ant1(fileName, obj.y, mystream, xml);
-		nextVisit = ant1.des(obj.y,nextVisit);
-	}
-
 
 	//inner interface of all kinds of data structures.
 	template<class T>template<class Vec>void xmlser <T>::des_parse(std::vector<Vec>& putin,tinyxml2::XMLElement* me) {
@@ -416,7 +360,6 @@ namespace Toxml {
 		}
 	}
 	template<class T>template<class ele>void xmlser <T>::des_parse(std::set<ele>& putin, tinyxml2::XMLElement* me) {
-		int size;
 		int size = atoi(me->Attribute("Size"));
 		tinyxml2::XMLElement* nextToGo = me->FirstChildElement();
 		for (size_t i = 0; i < size; i++)
@@ -450,7 +393,7 @@ namespace Toxml {
 	}
 	template<class T>template<class UPTR>void xmlser <T>::des_parse(std::unique_ptr<UPTR>& putin, tinyxml2::XMLElement* me) {
 		des_parse(*putin,me->FirstChildElement());
-		//÷∏’Î÷ªƒ‹÷∏œÚ“ª÷÷ ˝æ›¿‡–Õ
+		//ÊåáÈíàÂè™ËÉΩÊåáÂêë‰∏ÄÁßçÊï∞ÊçÆÁ±ªÂûã
 	}
 	//The followings are the EXIT of recursion.
 	
@@ -460,7 +403,12 @@ namespace Toxml {
 	}
 	template<class T> inline void xmlser< T>::des_parse( bool& value, tinyxml2::XMLElement* me) {
 		mystream << me->Attribute("val");
-		mystream >> value;
+		std::string temp;
+		mystream >> temp;
+		if (temp.find("true") != std::string::npos)
+			value = 1;
+		else
+			value = 0;
 	}
 	template<class T> inline void xmlser< T>::des_parse( short& value, tinyxml2::XMLElement* me) {
 		value = static_cast<short>(std:: atoi(me->Attribute("val")));
@@ -496,7 +444,7 @@ namespace Toxml {
 		value =  (me->Attribute("val"))[0];
 	}
 	template<class T> inline void xmlser< T>::des_parse( unsigned char& value, tinyxml2::XMLElement* me) {
-		value = static_cast<unsigned char>(me->Attribute("val"))[0];
+		value = static_cast<unsigned char>((me->Attribute("val"))[0]);
 	}
 	template<class T> inline void xmlser< T>::des_parse( long double& value, tinyxml2::XMLElement* me) {
 		value = static_cast<long double>(std::atof(me->Attribute("val")));
@@ -520,7 +468,7 @@ namespace Toxml {
 		mystream >> &value;
 	}
 
-	//Codes to conver plain text into and from base64.
+	//Codes to convert plain text into and from base64.
 	void To64(std::string fileName) {
 		std::string outfileName(fileName);
 		outfileName.replace(outfileName.find(".xml"), 4, ".base64");
@@ -539,7 +487,7 @@ namespace Toxml {
 				infile.read(in + 2, 1);
 			else;
 
-			//√ø¥Œ∂¡»Î»˝∏ˆ◊÷Ω⁄ √ª”–µƒª∞0≤π◊„≤¢«“º«¬º≤ª◊„µƒŒª ˝°£
+			//ÊØèÊ¨°ËØªÂÖ•‰∏â‰∏™Â≠óËäÇ Ê≤°ÊúâÁöÑËØù0Ë°•Ë∂≥Âπ∂‰∏îËÆ∞ÂΩï‰∏çË∂≥ÁöÑ‰ΩçÊï∞„ÄÇ
 
 			out[0] = alpha[in[0] >> 2];
 			out[1] = alpha[((in[0] & 0x03) << 4) + ((in[1] & 0xf0) >> 4)];
@@ -610,6 +558,9 @@ namespace Toxml {
 	void From64(std::string outfileName) {
 		std::string infileName(outfileName);
 		infileName.replace(infileName.find(".xml"), 4, ".base64");
+		std::fstream testfile(outfileName, std::ios::in | std::ios::binary);
+		if (!testfile.fail())
+			return;
 		std::fstream outfile(outfileName, std::ios::out | std::ios::binary);
 		std::fstream infile(infileName, std::ios::in | std::ios::binary);
 		char in[4], out[3];
@@ -620,7 +571,7 @@ namespace Toxml {
 			infile.read(in, 4);
 			if (!in[0] && !in[1] && !in[2] && !in[3])
 				break;
-			//√ø¥Œ∂¡»Î»˝∏ˆ◊÷Ω⁄ √ª”–µƒª∞0≤π◊„≤¢«“º«¬º≤ª◊„µƒŒª ˝°£
+			//ÊØèÊ¨°ËØªÂÖ•‰∏â‰∏™Â≠óËäÇ Ê≤°ÊúâÁöÑËØù0Ë°•Ë∂≥Âπ∂‰∏îËÆ∞ÂΩï‰∏çË∂≥ÁöÑ‰ΩçÊï∞„ÄÇ
 			ChangeChar(in, out);
 			for (size_t i = 0; i < 3; i++)
 			{
@@ -634,58 +585,59 @@ namespace Toxml {
 	}
 
 
+
+
 	//overall wrapper!
-	template <class T> void serialize(T& value, std::string file, bool user = 0) {
-		std::stringstream mystream;
-		tinyxml2::XMLDocument xml;
-		xmlser<T>myxml(file, value, mystream, &xml);
-		myxml.serUserDefined(value);
-		To64(file);
-		remove(file.c_str());
-	}
-	template <class T> void serialize(T& value, std::string file) {
+	//Userdefined ser to xml.
+	template <class T> void serialize( std::string file,T& value ) {
 		std::stringstream mystream;
 		tinyxml2::XMLDocument xml;
 		xmlser<T>myxml(file, value, mystream, &xml);		
 		myxml.ser(1);
-		To64(file);
-		remove(file.c_str());
 	}
-	template <class T> void serialize(std::unique_ptr<T>& value, std::string file) {
+	template <class T> void serialize( std::string file, std::unique_ptr<T>& value) {
 		std::stringstream mystream;
 		tinyxml2::XMLDocument xml;
 		xmlser<T>myxml(file, value, mystream, &xml);
 		myxml.ser(1);
-		To64(file);
-		remove(file.c_str());
 	}
-	template <class T> void deserialize(T& putin, std::string file ,bool user=0) {
+	void Userialize(std::string file) {
+		To64(file);
+	}
+	template<class T1, class ... T2>void Userialize(std::string file, T1& start, T2& ... val) {
+		serialize(file, start);
+		Userialize(file, val ...);
+	}
+
+
+	template <class T> tinyxml2::XMLElement* deserialize( std::string file, T& putin,tinyxml2::XMLElement* lastVisit=nullptr) {
 		From64(file);
+		std::stringstream mystream;
 		tinyxml2::XMLDocument xml;
 		xml.LoadFile(file.c_str());
-		remove(file.c_str());
-		std::stringstream mystream;
-		xmlser<T>myxml(file, putin, mystream, &xml);
-		myxml.desUserDefined(putin);
+		xmlser<T>myxml(file, putin, mystream, &xml,lastVisit);
+		tinyxml2::XMLElement* nextVisit= myxml.des(putin);
+		return nextVisit;
 	}
-	template <class T> void deserialize(T& putin, std::string file) {
+	template <class T> tinyxml2::XMLElement* deserialize( std::string file, std::unique_ptr<T>& putin, tinyxml2::XMLElement* lastVisit = nullptr) {
 		From64(file);
-		remove(file.c_str());
 		std::stringstream mystream;
 		tinyxml2::XMLDocument xml;
-		xmlser<T>myxml(file, putin, mystream, &xml);
-		myxml.des(putin);
-	}
-	template <class T> void deserialize(std::unique_ptr<T>& putin, std::string file) {
-		From64(file);
-		remove(file.c_str());
-		std::stringstream mystream;
-		tinyxml2::XMLDocument xml;
-		xmlser<T>myxml(file, putin, mystream, &xml);
-		myxml.des(putin);
+		xml.LoadFile(file.c_str());
+		xmlser<T>myxml(file, putin, mystream, &xml, lastVisit);
+		tinyxml2::XMLElement* nextVisit = myxml.des(putin);
+		return nextVisit;
 	}
 	//functions to shift files to base64 and back to utf-8.
 
+
+	void Udeserialize(std::string file, tinyxml2::XMLElement* lastVisit) {
+		return;
+	}
+	template<class T1, class ... T2>void Udeserialize(std::string file, tinyxml2::XMLElement* lastVisit, T1& start, T2& ... val) {
+		tinyxml2::XMLElement* nextVisit = deserialize(file, start, lastVisit);
+		Udeserialize(file, nextVisit, val ...);
+	}
 
 }
 #endif
