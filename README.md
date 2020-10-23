@@ -1,3 +1,2 @@
-Serialization&Deserialization in C++
-Implementation method:
-Recursion + Templates
+Projects of C++ course in ZJU. 
+Done independently.
